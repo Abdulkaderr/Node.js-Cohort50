@@ -1,121 +1,141 @@
-import newDatabase from './database.js';
-import bcrypt from 'bcrypt';
-import jwt from 'jsonwebtoken';
+import jwt from "jsonwebtoken";
+import { v4 as generateUUID } from "uuid";
+import { hash, compare } from "bcrypt";
+import newDatabase from "./database.js";
 
-// Change this boolean to true if you wish to keep your
-// users between restart of your application
-const isPersistent = true;
+const isPersistent = false;
 const database = newDatabase({ isPersistent });
-const SECRET_KEY = 'eBg8xnpkNZI23HBvrdZwlMAyfOB6xHzA';
-// Create middlewares required for routes defined in app.js
+
+const JWT_SECRET = "your_secret_key";
+const saltRounds = 10;
+
+const usersDatabase = database.getUsers();
 
 export const register = async (req, res) => {
-    const { username, password } = req.body;
-    console.log('Received register request:', req.body);
+  // Check request body
+  if (!req.body.username || !req.body.password) {
+    res
+      .status(400)
+      .json({ message: "Please provide username and password" })
+      .end();
+    return;
+  }
 
-    const SALT_ROUNDS = 12;
+  // Check if username already exists
+  const isUsernameExists = getUserByUsername(req.body.username) !== undefined;
+  if (isUsernameExists) {
+    res.status(400).json({ message: "Username already exists" }).end();
+    return;
+  }
 
-    if (!username || !password) {
-        res.status(400).send({ message: 'Username and password are required' });
-        return;
-    }
-    const allUsers = database.getAll();
+  // Hash the password and create new user
+  const hashedPassword = await hash(req.body.password, saltRounds);
+  const newUser = {
+    id: generateUUID(),
+    username: req.body.username,
+    password: hashedPassword,
+  };
 
-    const existingUser = allUsers.find((user) => user.username === username);
+  // Save user to usersDatabase
+  database.addUser(newUser);
 
-    if (existingUser) {
-        res.status(409).send({ message: 'Username already exists' });
-        return;
-    }
-
-    try {
-        const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
-        const newUser = {
-            username,
-            password: hashedPassword
-        };
-
-        const storedUser = database.create(newUser);
-        console.log('storedUser', storedUser);
-
-        res.status(201).send({
-            id: storedUser.id,
-            username: storedUser.username
-        });
-    } catch (error) {
-        console.error(error);
-        res.status(500).send({ message: ' Internal Server Error' });
-    }
+  // Return success and the new user to the client
+  res
+    .status(201)
+    .json({
+      id: newUser.id,
+      username: newUser.username,
+    })
+    .end();
 };
 
 export const login = async (req, res) => {
-    const { username, password } = req.body;
+  // Check request body
+  if (!req.body.username || !req.body.password) {
+    res
+      .status(400)
+      .json({ message: "Please provide username and password" })
+      .end();
+    return;
+  }
 
-    if (!username || !password) {
-        return res
-            .status(400)
-            .send({ message: 'Username and password are required' });
-    }
-    const allUsers = database.getAll();
-    const user = allUsers.find((user) => user.username === username);
+  // Find user in the database
+  const user = getUserByUsername(req.body.username);
+  if (!user) {
+    res
+      .status(401)
+      .json({ message: "Invalid username / password combination" })
+      .end();
+    return;
+  }
 
-    if (!user) {
-        return res.status(404).send({ message: 'User not found' });
-    }
+  // Check if password is correct by using bcrypt compare
+  const isPasswordCorrect = await compare(req.body.password, user.password);
+  if (!isPasswordCorrect) {
+    res
+      .status(401)
+      .json({ message: "Invalid username / password combination" })
+      .end();
+    return;
+  }
 
-    try {
-        const isPasswordValid = await bcrypt.compare(password, user.password);
+  // Generate JWT token
+  const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: "1h" });
 
-        if (!isPasswordValid) {
-            return res
-                .status(401)
-                .send({ message: 'Invalid username or password' });
-        }
-
-        const token = jwt.sign({ id: user.id }, SECRET_KEY, {
-            expiresIn: '1h'
-        });
-
-        res.status(201).send({ message: 'Login successful', token });
-    } catch (err) {
-        console.error(err);
-        res.status(500).send({ message: 'Internal Server Error' });
-    }
+  // Return the token to the client
+  res.status(200).json({ token }).end();
 };
 
 export const getProfile = (req, res) => {
-    const authHeader = req.headers.authorization;
+  // Check if user is logged in
+  const authHeader = req.headers.authorization;
+  const token = extractBearerTokenFromAuth(authHeader);
 
-    if (!authHeader) {
-        return res
-            .status(401)
-            .send({ message: 'Authorization token missing or invalid' });
+  if (!token) {
+    res.status(401).json({ message: "You are not logged in" }).end();
+    return;
+  }
+
+  // Verify JWT token
+  jwt.verify(token, JWT_SECRET, (err, decoded) => {
+    if (err) {
+      res.status(401).json({ message: "Invalid token" }).end();
+      return;
     }
 
-    const token = authHeader.split(' ')[1];
-    try {
-        const decoded = jwt.verify(token, SECRET_KEY);
-        const userId = decoded.id;
-
-        const user = database.getById(userId);
-
-        if (!user) {
-            return res.status(401).send({ message: 'User not found' });
-        }
-
-        res.status(200).send({
-            message: `Profile retrieved successfully! ${user.username}`,
-            username: user.username
-        });
-    } catch (err) {
-        console.error('JWT verification error:', err.message);
-        return res.status(401).send({ message: 'Invalid or expired token' });
+    const user = getUserById(decoded.userId);
+    if (!user) {
+      res.status(401).json({ message: "User not found" }).end();
+      return;
     }
+
+    // Return user profile
+    res
+      .status(200)
+      .json({
+        message: `Hello! You are currently logged in as ${user.username}!`,
+      })
+      .end();
+  });
 };
 
 export const logout = (req, res) => {
-    res.status(204).send({ message: 'Logout successfully!' });
+  // No need to track sessions with JWT
+  res.status(204).end();
 };
 
-// You can also create helper functions in this file to help you implement logic
-// inside middlewares
+// Helper functions
+const getUserByUsername = (username) => {
+  return usersDatabase.find((user) => user.username === username);
+};
+
+const getUserById = (userID) => {
+  return usersDatabase.find((user) => user.id === userID);
+};
+
+const extractBearerTokenFromAuth = (authorization) => {
+  if (!authorization || !authorization.startsWith("Bearer ")) {
+    return null;
+  }
+  return authorization.replace("Bearer ", "");
+};

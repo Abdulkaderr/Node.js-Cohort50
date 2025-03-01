@@ -1,27 +1,21 @@
-import express from 'express';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import { register, login, getProfile, logout } from './users.js';
+import express from "express";
+import { register, login, getProfile, logout } from "./controllers.js";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const app = express();
 
-let app = express();
+// Register Endpoint
+app.post("/register", register);
 
-app.use(express.json());
+// Login Endpoint
+app.post("/login", login);
 
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, '../client/index.html'));
-});
+// Get Profile Endpoint
+app.get("/profile", getProfile);
 
-app.post('/auth/register', register);
-app.post('/auth/login', login);
-app.get('/auth/profile', getProfile);
-app.post('/auth/logout', logout);
+// Logout Endpoint
+app.post("/logout", logout);
 
-// Serve the front-end application from the `client` folder
-app.use(express.static(path.join(__dirname, '../client')));
-
+// Start the server
 app.listen(3000, () => {
-    console.log('Server is running on port 3000');
+  console.log("Server is running on port 3000");
 });
