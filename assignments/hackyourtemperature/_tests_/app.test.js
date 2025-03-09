@@ -17,7 +17,7 @@ describe('POST /weather', () => {
             .post('/weather')
             .send({ cityName: 'nonesence123' });
         expect(response.status).toBe(404);
-        expect(response.body).toEqual({ weatherText: 'City is not found!' });
+        expect(response.body).toEqual({ error: 'City name is required!' });
     });
 
     it('should get 200 if correct cityName is sent', async () => {
